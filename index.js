@@ -19,10 +19,12 @@ const AlertEngine = require('./services/alertEngine');
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = [process.env.CLIENT_URL, 'http://localhost:3000', 'http://localhost:3001', 'http://localhost:5000'].filter(Boolean);
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5000', process.env.CLIENT_URL || '*'],
-    methods: ['GET', 'POST']
+    origin: allowedOrigins.length > 0 ? allowedOrigins : '*',
+    methods: ['GET', 'POST'],
+    credentials: true
   },
   transports: ['polling', 'websocket'],
   allowUpgrades: true,
