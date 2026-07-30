@@ -1,0 +1,42 @@
+const config = {
+  nseArchivesUrl: process.env.NSE_ARCHIVES_URL || 'https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv',
+  indexSymbols: (process.env.INDEX_SYMBOLS || '^NSEI,^BSESN,^NSEBANK,^CNXIT,^CNXAUTO,^CNXPHARMA,^CNXMETAL,^CNXENERGY,^CNXFMCG,^CNXREALTY,^CNXMEDIA,^CNXPSU,^CNXCONSUMER,^CNXFINANCE,^CNXCOMMODITIES,^CNXINFRA,^CNXHEALTHCARE').split(','),
+  indexNames: {
+    '^NSEI': process.env.INDEX_NSEI || 'NIFTY 50',
+    '^BSESN': process.env.INDEX_BSESN || 'SENSEX',
+    '^NSEBANK': process.env.INDEX_NSEBANK || 'NIFTY BANK',
+    '^CNXIT': process.env.INDEX_CNXIT || 'NIFTY IT',
+    '^CNXAUTO': process.env.INDEX_CNXAUTO || 'NIFTY AUTO',
+    '^CNXPHARMA': process.env.INDEX_CNXPHARMA || 'NIFTY PHARMA',
+    '^CNXMETAL': process.env.INDEX_CNXMETAL || 'NIFTY METAL',
+    '^CNXENERGY': process.env.INDEX_CNXENERGY || 'NIFTY ENERGY',
+    '^CNXFMCG': process.env.INDEX_CNXFMCG || 'NIFTY FMCG',
+    '^CNXREALTY': process.env.INDEX_CNXREALTY || 'NIFTY REALTY',
+    '^CNXMEDIA': process.env.INDEX_CNXMEDIA || 'NIFTY MEDIA',
+    '^CNXPSU': process.env.INDEX_CNXPSU || 'NIFTY PSE',
+    '^CNXCONSUMER': process.env.INDEX_CNXCONSUMER || 'NIFTY CONSUMPTION',
+    '^CNXFINANCE': process.env.INDEX_CNXFINANCE || 'NIFTY FINANCIAL SERVICES',
+    '^CNXCOMMODITIES': process.env.INDEX_CNXCOMMODITIES || 'NIFTY COMMODITIES',
+    '^CNXINFRA': process.env.INDEX_CNXINFRA || 'NIFTY INFRASTRUCTURE',
+    '^CNXHEALTHCARE': process.env.INDEX_CNXHEALTHCARE || 'NIFTY HEALTHCARE'
+  },
+  stocksCacheTtl: parseInt(process.env.STOCKS_CACHE_TTL) || 300000,
+  sectorCacheTtl: parseInt(process.env.SECTOR_CACHE_TTL) || 120,
+  indicesCacheTtl: parseInt(process.env.INDICES_CACHE_TTL) || 60,
+  quoteCacheTtl: parseInt(process.env.QUOTE_CACHE_TTL) || 15,
+  quotesAllCacheTtl: parseInt(process.env.QUOTES_ALL_CACHE_TTL) || 30,
+  stockDetailsCacheTtl: parseInt(process.env.STOCK_DETAILS_CACHE_TTL) || 15,
+  historicalPricesCacheTtl: parseInt(process.env.HISTORICAL_PRICES_CACHE_TTL) || 600,
+  intradayCacheTtl: parseInt(process.env.INTRADAY_CACHE_TTL) || 30,
+  gainersCacheTtl: parseInt(process.env.GAINERS_CACHE_TTL) || 300,
+  losersCacheTtl: parseInt(process.env.LOSERS_CACHE_TTL) || 300,
+  mostActiveCacheTtl: parseInt(process.env.MOST_ACTIVE_CACHE_TTL) || 300,
+  quoteBatchSize: parseInt(process.env.QUOTE_BATCH_SIZE) || 10,
+  sectorBuildInterval: parseInt(process.env.SECTOR_BUILD_INTERVAL) || 86400000,
+  symbolRefreshInterval: parseInt(process.env.SYMBOL_REFRESH_INTERVAL) || 86400000,
+  newsUrl: process.env.NEWS_RSS_URL || 'https://news.google.com/rss/search',
+  marketOpenHour: parseInt(process.env.MARKET_OPEN_HOUR) || 9,
+  marketOpenMinute: parseInt(process.env.MARKET_OPEN_MINUTE) || 15
+};
+
+module.exports = config;
