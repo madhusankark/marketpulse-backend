@@ -74,7 +74,7 @@ app.use('/api/stocks', require('./routes/stocks'));
 app.use('/api/watchlists', require('./routes/watchlist'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/notifications', require('./routes/notifications'));
-// app.use('/api/admin', require('./routes/admin'));
+app.use('/api/admin', require('./routes/admin'));
 app.use('/api/portfolio', require('./routes/portfolio'));
 
 app.get('/api/health', async (req, res) => {

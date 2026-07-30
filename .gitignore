@@ -5,6 +5,5 @@ logs/
 .DS_Store
 data/
 seed.js
-routes/admin.js
 client/node_modules/
 client/build/
