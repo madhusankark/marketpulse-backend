@@ -26,6 +26,7 @@ const connectDB = async () => {
 };
 
 const redis = new Redis(process.env.REDIS_URL, {
+  tls: {},
   retryDelayOnFailover: 100,
   maxRetriesPerRequest: 3,
   lazyConnect: true
