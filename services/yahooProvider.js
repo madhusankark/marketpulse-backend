@@ -15,6 +15,7 @@ let SYMBOL_TO_SECTOR = {};
 let cachedStocks = null;
 let lastFetchTime = 0;
 let isFirstBuildDone = false;
+let fetchPromise = null;
 
 function loadSectorMapFromDisk() {
   try {
@@ -113,35 +114,42 @@ async function fetchAllStocks() {
   const now = Date.now();
   if (isFirstBuildDone && cachedStocks && (now - lastFetchTime) < config.stocksCacheTtl) return cachedStocks;
   if (TRACKED_SYMBOLS.length === 0) return cachedStocks || [];
+  if (fetchPromise) return fetchPromise;
 
-  try {
-    const symbolsWithSuffix = TRACKED_SYMBOLS.map(s => `${s}.NS`);
-    const chunks = [];
-    for (let i = 0; i < symbolsWithSuffix.length; i += CHUNK_SIZE) {
-      chunks.push(symbolsWithSuffix.slice(i, i + CHUNK_SIZE));
-    }
-    const chunkResults = await Promise.all(
-      chunks.map(chunk => yf.quote(chunk).catch(e => {
-        logger.warn(`Bulk quote chunk failed (${chunk.length} symbols): ${e.message}`);
-        return [];
-      }))
-    );
-    const results = [];
-    for (const quotes of chunkResults) {
-      for (const q of quotes) {
-        if (q && q.regularMarketPrice) {
-          results.push(normalizeYahooQuote(q));
+  fetchPromise = (async () => {
+    try {
+      const symbolsWithSuffix = TRACKED_SYMBOLS.map(s => `${s}.NS`);
+      const chunks = [];
+      for (let i = 0; i < symbolsWithSuffix.length; i += CHUNK_SIZE) {
+        chunks.push(symbolsWithSuffix.slice(i, i + CHUNK_SIZE));
+      }
+      const chunkResults = await Promise.all(
+        chunks.map(chunk => yf.quote(chunk).catch(e => {
+          logger.warn(`Bulk quote chunk failed (${chunk.length} symbols): ${e.message}`);
+          return [];
+        }))
+      );
+      const results = [];
+      for (const quotes of chunkResults) {
+        for (const q of quotes) {
+          if (q && q.regularMarketPrice) {
+            results.push(normalizeYahooQuote(q));
+          }
         }
       }
+      cachedStocks = results;
+      lastFetchTime = Date.now();
+      isFirstBuildDone = true;
+      logger.info(`Fetched ${results.length} active stocks (${chunks.length} chunks)`);
+    } catch (error) {
+      logger.error(`Yahoo fetchAllStocks error: ${error.message}`);
+    } finally {
+      fetchPromise = null;
     }
-    cachedStocks = results;
-    lastFetchTime = Date.now();
-    isFirstBuildDone = true;
-    logger.info(`Fetched ${results.length} active stocks (${chunks.length} chunks)`);
-  } catch (error) {
-    logger.error(`Yahoo fetchAllStocks error: ${error.message}`);
-  }
-  return cachedStocks || [];
+    return cachedStocks || [];
+  })();
+
+  return fetchPromise;
 }
 
 class YahooProvider {
