@@ -76,78 +76,19 @@ class MarketDataService {
     const cached = await redis.get(cacheKey);
     if (cached) {
       const parsed = JSON.parse(cached);
-      const last = new Date(parsed[parsed.length - 1].timestamp);
-      const now = new Date();
-      if (last.toDateString() === now.toDateString() && (now - last) < 60000) return parsed;
-    }
-
-    const today = new Date();
-    const marketOpen = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 3, 45, 0));
-
-    let realData = [];
-    let openPrice = 0;
-    let currentPrice = 0;
-
-    realData = await YahooProvider.getIntradayData(symbol);
-
-    const quote = await this.getLiveQuote(symbol);
-    openPrice = openPrice || quote?.open || 0;
-    currentPrice = quote?.lastPrice || openPrice;
-    if (!openPrice || !currentPrice) return [];
-
-    const intervalMs = 60000;
-    const points = [];
-    let baseTime = marketOpen.getTime();
-    let lastClose = openPrice;
-
-    if (realData.length > 0) {
-      const lastReal = realData[realData.length - 1];
-      baseTime = lastReal.timestamp.getTime() + intervalMs;
-      lastClose = lastReal.close;
-      points.push(...realData);
-    }
-
-    const remaining = Math.floor((today.getTime() - baseTime) / intervalMs);
-    if (remaining > 0) {
-      const drift = (currentPrice - lastClose) / Math.max(1, remaining);
-      const volatility = Math.abs(openPrice) * 0.0004;
-      let price = lastClose;
-
-      for (let i = 0; i < remaining; i++) {
-        const noise = (Math.random() - 0.5) * 2 * volatility;
-        price = price + drift + noise;
-        const remainingPts = remaining - i - 1;
-        if (remainingPts > 0) {
-          const target = lastClose + (currentPrice - lastClose) * (i + 1) / remaining;
-          price += (target - price) * 0.02;
-        }
-        points.push({
-          timestamp: new Date(baseTime + i * intervalMs),
-          open: points.length > 0 ? points[points.length - 1].close : openPrice,
-          high: price + Math.abs(noise) * 0.5 + volatility * 0.3,
-          low: price - Math.abs(noise) * 0.5 - volatility * 0.3,
-          close: price, volume: 0
-        });
+      if (parsed.length > 0) {
+        const last = new Date(parsed[parsed.length - 1].timestamp);
+        const now = new Date();
+        if (last.toDateString() === now.toDateString()) return parsed;
       }
     }
 
-    if (points.length > 0) {
-      if (realData.length === 0) {
-        points[0].open = openPrice;
-        points[0].close = openPrice;
-        points[0].high = openPrice;
-        points[0].low = openPrice;
-        points[0].volume = 0;
-      }
-      points[points.length - 1].close = currentPrice;
-      points[points.length - 1].open = points.length > 1 ? points[points.length - 2].close : currentPrice;
-      points[points.length - 1].high = Math.max(points[points.length - 1].open, points[points.length - 1].close);
-      points[points.length - 1].low = Math.min(points[points.length - 1].open, points[points.length - 1].close);
-      points[points.length - 1].volume = quote?.volume || 0;
-    }
+    const points = await YahooProvider.getIntradayData(symbol);
 
-    await redis.setex(cacheKey, config.intradayCacheTtl, JSON.stringify(points));
-    return points;
+    if (points && points.length > 0) {
+      await redis.setex(cacheKey, config.intradayCacheTtl, JSON.stringify(points));
+    }
+    return points || [];
   }
 
   static async getMarketIndices() {
