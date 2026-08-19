@@ -3,26 +3,43 @@ const { redis, logger } = require('../config/db');
 const config = require('../config/app');
 const axios = require('axios');
 
+async function safeCacheGet(key) {
+  try {
+    if (!redis || typeof redis.get !== 'function') return null;
+    const val = await redis.get(key);
+    return val ? JSON.parse(val) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function safeCacheSet(key, ttl, data) {
+  try {
+    if (!redis || typeof redis.setex !== 'function') return;
+    await redis.setex(key, ttl, JSON.stringify(data));
+  } catch (_) {}
+}
+
 class MarketDataService {
 
   static async getLiveQuote(symbol) {
-    const cached = await redis.get(`quote:${symbol}`);
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet(`quote:${symbol}`);
+    if (cached) return cached;
 
     const quote = await YahooProvider.getStockQuote(symbol);
     if (quote) {
-      await redis.setex(`quote:${symbol}`, config.quoteCacheTtl, JSON.stringify(quote));
+      await safeCacheSet(`quote:${symbol}`, config.quoteCacheTtl, quote);
       return quote;
     }
     return null;
   }
 
   static async getAllQuotes() {
-    const cached = await redis.get('quotes:all');
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet('quotes:all');
+    if (cached) return cached;
 
     const quotes = await YahooProvider.getMostActive();
-    await redis.setex('quotes:all', config.quotesAllCacheTtl, JSON.stringify(quotes));
+    await safeCacheSet('quotes:all', config.quotesAllCacheTtl, quotes);
     return quotes;
   }
 
@@ -38,25 +55,25 @@ class MarketDataService {
   }
 
   static async getStockDetails(symbol) {
-    const cached = await redis.get(`details:${symbol}`);
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet(`details:${symbol}`);
+    if (cached) return cached;
 
     const quote = await this.getLiveQuote(symbol);
     if (!quote) return null;
 
     const details = { ...quote, sector: quote.sector || '', recentPrices: [] };
 
-    await redis.setex(`details:${symbol}`, config.stockDetailsCacheTtl, JSON.stringify(details));
+    await safeCacheSet(`details:${symbol}`, config.stockDetailsCacheTtl, details);
     return details;
   }
 
   static async getHistoricalPrices(symbol, days = 90) {
     const cacheKey = `history:${symbol}:${days}`;
-    const cached = await redis.get(cacheKey);
+    const cached = await safeCacheGet(cacheKey);
     let prices;
 
     if (cached) {
-      prices = JSON.parse(cached).map(p => ({ ...p, timestamp: new Date(p.timestamp) }));
+      prices = cached.map(p => ({ ...p, timestamp: new Date(p.timestamp) }));
     } else {
       const end = new Date();
       const start = new Date();
@@ -64,7 +81,7 @@ class MarketDataService {
 
       prices = await YahooProvider.getHistoricalData(symbol, start, end);
       if (prices && prices.length > 0) {
-        await redis.setex(cacheKey, config.historicalPricesCacheTtl, JSON.stringify(prices));
+        await safeCacheSet(cacheKey, config.historicalPricesCacheTtl, prices);
       }
     }
 
@@ -73,31 +90,28 @@ class MarketDataService {
 
   static async getIntradayPrices(symbol) {
     const cacheKey = `intraday:${symbol}`;
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (parsed.length > 0) {
-        const last = new Date(parsed[parsed.length - 1].timestamp);
-        const now = new Date();
-        if (last.toDateString() === now.toDateString()) return parsed;
-      }
+    const cached = await safeCacheGet(cacheKey);
+    if (cached && Array.isArray(cached) && cached.length > 0) {
+      const last = new Date(cached[cached.length - 1].timestamp);
+      const now = new Date();
+      if (last.toDateString() === now.toDateString()) return cached;
     }
 
     const points = await YahooProvider.getIntradayData(symbol);
 
     if (points && points.length > 0) {
-      await redis.setex(cacheKey, config.intradayCacheTtl, JSON.stringify(points));
+      await safeCacheSet(cacheKey, config.intradayCacheTtl, points);
     }
     return points || [];
   }
 
   static async getMarketIndices() {
-    const cached = await redis.get('indices');
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet('indices');
+    if (cached) return cached;
 
     const results = await YahooProvider.getIndices();
     if (results.length > 0) {
-      await redis.setex('indices', config.indicesCacheTtl, JSON.stringify(results));
+      await safeCacheSet('indices', config.indicesCacheTtl, results);
       return results;
     }
 
@@ -105,8 +119,8 @@ class MarketDataService {
   }
 
   static async getSectorPerformance() {
-    const cached = await redis.get('sectors');
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet('sectors');
+    if (cached) return cached;
 
     const allStocks = await YahooProvider.warmCache();
     if (!allStocks || allStocks.length === 0) return [];
@@ -148,14 +162,14 @@ class MarketDataService {
     });
 
     if (sectors.length > 0) {
-      await redis.setex('sectors', config.sectorCacheTtl, JSON.stringify(sectors));
+      await safeCacheSet('sectors', config.sectorCacheTtl, sectors);
     }
     return sectors;
   }
 
   static async getTopGainers(limit = 10) {
-    const cached = await redis.get('gainers');
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet('gainers');
+    if (cached) return cached;
 
     let all = [];
     try {
@@ -169,13 +183,13 @@ class MarketDataService {
     }
 
     const results = all.sort((a, b) => b.changePercent - a.changePercent).slice(0, limit);
-    await redis.setex('gainers', config.gainersCacheTtl, JSON.stringify(results));
+    await safeCacheSet('gainers', config.gainersCacheTtl, results);
     return results;
   }
 
   static async getTopLosers(limit = 10) {
-    const cached = await redis.get('losers');
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet('losers');
+    if (cached) return cached;
 
     let all = [];
     try {
@@ -189,17 +203,17 @@ class MarketDataService {
     }
 
     const results = all.sort((a, b) => a.changePercent - b.changePercent).slice(0, limit);
-    await redis.setex('losers', config.losersCacheTtl, JSON.stringify(results));
+    await safeCacheSet('losers', config.losersCacheTtl, results);
     return results;
   }
 
   static async getMostActive(limit = 10) {
-    const cached = await redis.get('most_active');
-    if (cached) return JSON.parse(cached);
+    const cached = await safeCacheGet('most_active');
+    if (cached) return cached;
 
     const results = await YahooProvider.getMostActive();
     const sliced = results.slice(0, limit);
-    await redis.setex('most_active', config.mostActiveCacheTtl, JSON.stringify(sliced));
+    await safeCacheSet('most_active', config.mostActiveCacheTtl, sliced);
     return sliced;
   }
 
