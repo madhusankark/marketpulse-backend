@@ -191,8 +191,11 @@ async function start() {
 }
 
 process.on('unhandledRejection', (err) => {
-  logger.error('Unhandled Rejection:', err.message);
-  server.close(() => process.exit(1));
+  logger.error('Unhandled Rejection (process kept alive):', err?.message || err);
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception (process kept alive):', err?.message || err);
 });
 
 process.on('SIGTERM', () => {
