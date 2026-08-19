@@ -166,6 +166,9 @@ async function fetchAllStocks() {
               results.push(normalizeYahooQuote(q));
             }
           }
+          if (!cachedStocks || cachedStocks.length < results.length) {
+            cachedStocks = [...results];
+          }
         } catch (e) {
           logger.warn(`Batch quote chunk failed (${batch.length} symbols): ${e.message}`);
         }
