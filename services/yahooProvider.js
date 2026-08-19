@@ -138,28 +138,33 @@ async function fetchAllStocks() {
   fetchPromise = (async () => {
     try {
       const symbolsWithSuffix = TRACKED_SYMBOLS.map(s => `${s}.NS`);
-      const chunks = [];
-      for (let i = 0; i < symbolsWithSuffix.length; i += CHUNK_SIZE) {
-        chunks.push(symbolsWithSuffix.slice(i, i + CHUNK_SIZE));
-      }
-      const chunkResults = await Promise.all(
-        chunks.map(chunk => yf.quote(chunk).catch(e => {
-          logger.warn(`Bulk quote chunk failed (${chunk.length} symbols): ${e.message}`);
-          return [];
-        }))
-      );
+      const batchSize = 35;
       const results = [];
-      for (const quotes of chunkResults) {
-        for (const q of quotes) {
-          if (q && q.regularMarketPrice != null) {
-            results.push(normalizeYahooQuote(q));
+
+      for (let i = 0; i < symbolsWithSuffix.length; i += batchSize) {
+        const batch = symbolsWithSuffix.slice(i, i + batchSize);
+        try {
+          const quotes = await yf.quote(batch);
+          const list = Array.isArray(quotes) ? quotes : [quotes];
+          for (const q of list) {
+            if (q && q.regularMarketPrice != null) {
+              results.push(normalizeYahooQuote(q));
+            }
           }
+        } catch (e) {
+          logger.warn(`Batch quote chunk failed (${batch.length} symbols): ${e.message}`);
+        }
+        if (i + batchSize < symbolsWithSuffix.length) {
+          await new Promise(res => setTimeout(res, 80));
         }
       }
-      cachedStocks = results;
-      lastFetchTime = Date.now();
-      isFirstBuildDone = true;
-      logger.info(`Fetched ${results.length} active stocks (${chunks.length} chunks)`);
+
+      if (results.length > 0) {
+        cachedStocks = results;
+        lastFetchTime = Date.now();
+        isFirstBuildDone = true;
+        logger.info(`Fetched ${results.length} active stocks in sequential batches`);
+      }
     } catch (error) {
       logger.error(`Yahoo fetchAllStocks error: ${error.message}`);
     } finally {
@@ -313,8 +318,16 @@ class YahooProvider {
 
   static async getIndices() {
     try {
-      const results = await Promise.all(config.indexSymbols.map(sym => yf.quote(sym).catch(() => null)));
-      return results.filter(Boolean).map(q => {
+      let rawQuotes = [];
+      try {
+        rawQuotes = await yf.quote(config.indexSymbols);
+      } catch (e) {
+        logger.warn(`Bulk index quote note: ${e.message}. Retrying individually.`);
+        rawQuotes = await Promise.all(config.indexSymbols.map(sym => yf.quote(sym).catch(() => null)));
+      }
+
+      const results = (Array.isArray(rawQuotes) ? rawQuotes : [rawQuotes]).filter(Boolean);
+      return results.map(q => {
         const price = q.regularMarketPrice ?? 0;
         const prevClose = q.regularMarketPreviousClose ?? price;
         let change = q.regularMarketChange ?? (price - prevClose);
