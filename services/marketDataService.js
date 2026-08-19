@@ -24,7 +24,7 @@ class MarketDataService {
 
   static async getLiveQuote(symbol) {
     const cached = await safeCacheGet(`quote:${symbol}`);
-    if (cached) return cached;
+    if (cached && cached.symbol) return cached;
 
     const quote = await YahooProvider.getStockQuote(symbol);
     if (quote) {
@@ -36,11 +36,13 @@ class MarketDataService {
 
   static async getAllQuotes() {
     const cached = await safeCacheGet('quotes:all');
-    if (cached) return cached;
+    if (cached && Array.isArray(cached) && cached.length > 0) return cached;
 
     const quotes = await YahooProvider.getMostActive();
-    await safeCacheSet('quotes:all', config.quotesAllCacheTtl, quotes);
-    return quotes;
+    if (quotes && quotes.length > 0) {
+      await safeCacheSet('quotes:all', config.quotesAllCacheTtl, quotes);
+    }
+    return quotes || [];
   }
 
   static async searchStocks(query, limit = 20) {
@@ -56,7 +58,7 @@ class MarketDataService {
 
   static async getStockDetails(symbol) {
     const cached = await safeCacheGet(`details:${symbol}`);
-    if (cached) return cached;
+    if (cached && cached.symbol) return cached;
 
     const quote = await this.getLiveQuote(symbol);
     if (!quote) return null;
@@ -72,7 +74,7 @@ class MarketDataService {
     const cached = await safeCacheGet(cacheKey);
     let prices;
 
-    if (cached) {
+    if (cached && Array.isArray(cached) && cached.length > 0) {
       prices = cached.map(p => ({ ...p, timestamp: new Date(p.timestamp) }));
     } else {
       const end = new Date();
@@ -107,10 +109,10 @@ class MarketDataService {
 
   static async getMarketIndices() {
     const cached = await safeCacheGet('indices');
-    if (cached) return cached;
+    if (cached && Array.isArray(cached) && cached.length > 0) return cached;
 
     const results = await YahooProvider.getIndices();
-    if (results.length > 0) {
+    if (results && results.length > 0) {
       await safeCacheSet('indices', config.indicesCacheTtl, results);
       return results;
     }
