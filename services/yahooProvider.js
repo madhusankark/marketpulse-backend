@@ -21,7 +21,8 @@ function loadSectorMapFromDisk() {
   try {
     if (fs.existsSync(SECTOR_MAP_PATH)) {
       SYMBOL_TO_SECTOR = JSON.parse(fs.readFileSync(SECTOR_MAP_PATH, 'utf8'));
-      logger.info(`Sector map loaded from disk: ${Object.keys(SYMBOL_TO_SECTOR).length} symbols`);
+      TRACKED_SYMBOLS = Object.keys(SYMBOL_TO_SECTOR);
+      logger.info(`Sector map loaded from disk: ${TRACKED_SYMBOLS.length} symbols initialized`);
       return true;
     }
   } catch (e) {
@@ -44,17 +45,22 @@ function saveSectorMapToDisk() {
 async function fetchTrackedSymbols() {
   try {
     const csv = await new Promise((resolve, reject) => {
-      https.get(config.nseArchivesUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+      const req = https.get(config.nseArchivesUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 5000 }, (res) => {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => resolve(data));
-      }).on('error', reject);
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('NSE archive fetch timed out')); });
     });
     const lines = csv.trim().split('\n').slice(1);
-    TRACKED_SYMBOLS = [...new Set(lines.filter(l => l.split(',')[2] === 'EQ').map(l => l.split(',')[0]).filter(Boolean))];
-    logger.info(`Tracked symbols loaded: ${TRACKED_SYMBOLS.length}`);
+    const downloaded = lines.filter(l => l.split(',')[2] === 'EQ').map(l => l.split(',')[0]).filter(Boolean);
+    if (downloaded.length > 0) {
+      TRACKED_SYMBOLS = [...new Set([...TRACKED_SYMBOLS, ...downloaded])];
+      logger.info(`Tracked symbols updated: ${TRACKED_SYMBOLS.length}`);
+    }
   } catch (error) {
-    logger.error(`Fetch tracked symbols error: ${error.message}`);
+    logger.warn(`Fetch tracked symbols note: ${error.message}. Using ${TRACKED_SYMBOLS.length} fallback symbols.`);
   }
 }
 
@@ -87,24 +93,37 @@ async function buildSectorMap(symbols) {
 
 function normalizeYahooQuote(q) {
   const sym = (q.symbol || '').replace('.NS', '');
+  const price = q.regularMarketPrice ?? null;
+  const prevClose = q.regularMarketPreviousClose ?? null;
+  let change = q.regularMarketChange ?? null;
+  if (change == null && price != null && prevClose != null) {
+    change = Number((price - prevClose).toFixed(2));
+  }
+  let changePct = q.regularMarketChangePercent ?? null;
+  if (changePct == null && price != null && prevClose && prevClose !== 0) {
+    changePct = Number((((price - prevClose) / prevClose) * 100).toFixed(2));
+  } else if (changePct != null) {
+    changePct = Number(changePct.toFixed(2));
+  }
+
   return {
     symbol: sym,
     name: q.shortName || q.longName || sym,
     exchange: 'NSE',
     sector: SYMBOL_TO_SECTOR[sym] || '',
-    lastPrice: q.regularMarketPrice ?? null,
-    previousClose: q.regularMarketPreviousClose ?? null,
+    lastPrice: price,
+    previousClose: prevClose,
     open: q.regularMarketOpen ?? null,
     dayHigh: q.regularMarketDayHigh ?? null,
     dayLow: q.regularMarketDayLow ?? null,
-    change: q.regularMarketChange ?? null,
-    changePercent: q.regularMarketChangePercent != null ? parseFloat((q.regularMarketChangePercent * 100).toFixed(2)) : null,
+    change,
+    changePercent: changePct,
     volume: q.regularMarketVolume ?? null,
-    turnover: q.regularMarketPrice != null && q.regularMarketVolume != null ? q.regularMarketPrice * q.regularMarketVolume : null,
+    turnover: price != null && q.regularMarketVolume != null ? Math.round(price * q.regularMarketVolume) : null,
     yearHigh: q.fiftyTwoWeekHigh ?? null,
     yearLow: q.fiftyTwoWeekLow ?? null,
-    vwap: (q.regularMarketDayHigh && q.regularMarketDayLow && q.regularMarketPrice)
-      ? +((q.regularMarketDayHigh + q.regularMarketDayLow + q.regularMarketPrice) / 3).toFixed(2)
+    vwap: (q.regularMarketDayHigh && q.regularMarketDayLow && price)
+      ? +((q.regularMarketDayHigh + q.regularMarketDayLow + price) / 3).toFixed(2)
       : null,
     lastUpdated: new Date().toISOString()
   };
@@ -132,7 +151,7 @@ async function fetchAllStocks() {
       const results = [];
       for (const quotes of chunkResults) {
         for (const q of quotes) {
-          if (q && q.regularMarketPrice) {
+          if (q && q.regularMarketPrice != null) {
             results.push(normalizeYahooQuote(q));
           }
         }
@@ -156,38 +175,41 @@ class YahooProvider {
 
   static async getStockQuote(nseSymbol) {
     if (!nseSymbol) return null;
-    const sym = nseSymbol.toUpperCase().replace('-EQ', '');
+    const sym = nseSymbol.toUpperCase().replace('-EQ', '').replace('.NS', '');
     try {
       const q = await yf.quote(`${sym}.NS`);
-      if (!q) return null;
+      if (!q || q.regularMarketPrice == null) return null;
+      const price = q.regularMarketPrice;
+      const prevClose = q.regularMarketPreviousClose ?? price;
+      let change = q.regularMarketChange ?? (price - prevClose);
+      change = Number(change.toFixed(2));
+      let changePercent = q.regularMarketChangePercent != null
+        ? Number(q.regularMarketChangePercent.toFixed(2))
+        : (prevClose ? Number((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0);
+
       return {
         symbol: sym, name: q.shortName || q.longName || sym, exchange: 'NSE',
         sector: SYMBOL_TO_SECTOR[sym] || '',
-        lastPrice: q.regularMarketPrice ?? null,
-        previousClose: q.regularMarketPreviousClose ?? null,
-        open: q.regularMarketOpen ?? null,
-        dayHigh: q.regularMarketDayHigh ?? null,
-        dayLow: q.regularMarketDayLow ?? null,
-        close: q.regularMarketPrice ?? null,
-        vwap: (q.regularMarketDayHigh && q.regularMarketDayLow && q.regularMarketPrice)
-          ? +((q.regularMarketDayHigh + q.regularMarketDayLow + q.regularMarketPrice) / 3).toFixed(2)
-          : null,
-        change: q.regularMarketChange ?? null,
-        changePercent: q.regularMarketChangePercent != null ? parseFloat((q.regularMarketChangePercent * 100).toFixed(2)) : null,
-        volume: q.regularMarketVolume ?? null,
-        turnover: q.regularMarketPrice != null && q.regularMarketVolume != null ? q.regularMarketPrice * q.regularMarketVolume : null,
-        week52High: q.fiftyTwoWeekHigh ?? null,
-        week52Low: q.fiftyTwoWeekLow ?? null,
+        lastPrice: price,
+        previousClose: prevClose,
+        open: q.regularMarketOpen ?? price,
+        dayHigh: q.regularMarketDayHigh ?? price,
+        dayLow: q.regularMarketDayLow ?? price,
+        close: price,
+        vwap: (q.regularMarketDayHigh && q.regularMarketDayLow && price)
+          ? +((q.regularMarketDayHigh + q.regularMarketDayLow + price) / 3).toFixed(2)
+          : price,
+        change,
+        changePercent,
+        volume: q.regularMarketVolume ?? 0,
+        turnover: q.regularMarketVolume ? Math.round(price * q.regularMarketVolume) : 0,
+        week52High: q.fiftyTwoWeekHigh ?? price,
+        week52Low: q.fiftyTwoWeekLow ?? price,
         lastUpdated: new Date().toISOString()
       };
     } catch (error) {
-      return {
-        symbol: sym, name: sym, exchange: 'NSE', sector: '',
-        lastPrice: null, previousClose: null, open: null, dayHigh: null, dayLow: null, close: null,
-        vwap: null, change: null, changePercent: null, volume: null, turnover: null,
-        week52High: null, week52Low: null, lastUpdated: new Date().toISOString(),
-        _reasons: { _all: `Yahoo quote error: ${error.message}` }
-      };
+      logger.error(`getStockQuote error for ${sym}: ${error.message}`);
+      return null;
     }
   }
 
@@ -210,7 +232,7 @@ class YahooProvider {
   }
 
   static async getHistoricalData(symbol, start, end) {
-    const sym = symbol.toUpperCase().replace('-EQ', '');
+    const sym = symbol.toUpperCase().replace('-EQ', '').replace('.NS', '');
     try {
       const result = await yf.chart(`${sym}.NS`, { period1: start, period2: end, interval: '1d' });
       return (result?.quotes || []).filter(d => d && d.date).map(d => ({
@@ -228,12 +250,12 @@ class YahooProvider {
   }
 
   static async getIntradayData(symbol) {
-    const sym = symbol.toUpperCase().replace('-EQ', '');
+    const sym = symbol.toUpperCase().replace('-EQ', '').replace('.NS', '');
     const today = new Date();
     const start = new Date(today);
     start.setHours(0, 0, 0, 0);
     try {
-      const result = await yf.chart(`${sym}.NS`, { period1: start, period2: today, interval: '1m' });
+      const result = await yf.chart(`${sym}.NS`, { period1: start, period2: today, interval: '5m' });
       return (result?.quotes || []).filter(d => d && d.date).map(d => ({
         timestamp: new Date(d.date),
         open: d.open || 0,
@@ -249,7 +271,7 @@ class YahooProvider {
   }
 
   static async getFundamentals(symbol) {
-    const sym = symbol.toUpperCase().replace('-EQ', '');
+    const sym = symbol.toUpperCase().replace('-EQ', '').replace('.NS', '');
     try {
       const [q, qs] = await Promise.all([
         yf.quote(`${sym}.NS`),
@@ -292,22 +314,32 @@ class YahooProvider {
   static async getIndices() {
     try {
       const results = await Promise.all(config.indexSymbols.map(sym => yf.quote(sym).catch(() => null)));
-      return results.filter(Boolean).map(q => ({
-        symbol: q.symbol,
-        name: config.indexNames[q.symbol] || q.shortName || q.symbol,
-        exchange: 'NSE',
-        currentValue: q.regularMarketPrice ?? 0,
-        previousClose: q.regularMarketPreviousClose ?? 0,
-        open: q.regularMarketOpen ?? 0,
-        dayHigh: q.regularMarketDayHigh ?? 0,
-        dayLow: q.regularMarketDayLow ?? 0,
-        yearHigh: q.fiftyTwoWeekHigh ?? 0,
-        yearLow: q.fiftyTwoWeekLow ?? 0,
-        change: q.regularMarketChange ?? 0,
-        changePercent: q.regularMarketChangePercent != null ? q.regularMarketChangePercent * 100 : 0,
-        volume: 0,
-        lastUpdated: new Date().toISOString()
-      }));
+      return results.filter(Boolean).map(q => {
+        const price = q.regularMarketPrice ?? 0;
+        const prevClose = q.regularMarketPreviousClose ?? price;
+        let change = q.regularMarketChange ?? (price - prevClose);
+        change = Number(change.toFixed(2));
+        let changePercent = q.regularMarketChangePercent != null
+          ? Number(q.regularMarketChangePercent.toFixed(2))
+          : (prevClose ? Number((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0);
+
+        return {
+          symbol: q.symbol,
+          name: config.indexNames[q.symbol] || q.shortName || q.symbol,
+          exchange: 'NSE',
+          currentValue: price,
+          previousClose: prevClose,
+          open: q.regularMarketOpen ?? price,
+          dayHigh: q.regularMarketDayHigh ?? price,
+          dayLow: q.regularMarketDayLow ?? price,
+          yearHigh: q.fiftyTwoWeekHigh ?? price,
+          yearLow: q.fiftyTwoWeekLow ?? price,
+          change,
+          changePercent,
+          volume: 0,
+          lastUpdated: new Date().toISOString()
+        };
+      });
     } catch (error) {
       logger.error(`Yahoo indices error: ${error.message}`);
       return [];
